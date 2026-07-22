@@ -233,6 +233,7 @@ jobs:
             github.com:443
             objects.githubusercontent.com:443
             rekor.sigstore.dev:443
+            release-assets.githubusercontent.com:443
             tuf-repo-cdn.sigstore.dev:443
             uploads.github.com:443
 
@@ -305,8 +306,10 @@ jobs:
             objects.githubusercontent.com:443
             pkg-containers.githubusercontent.com:443
             production.cloudflare.docker.com:443
+            production.cloudfront.docker.com:443
             registry-1.docker.io:443
             rekor.sigstore.dev:443
+            release-assets.githubusercontent.com:443
             tuf-repo-cdn.sigstore.dev:443
 
       - name: Checkout
@@ -408,6 +411,7 @@ jobs:
             github.com:443
             objects.githubusercontent.com:443
             rekor.sigstore.dev:443
+            release-assets.githubusercontent.com:443
             tuf-repo-cdn.sigstore.dev:443
 
       - name: Checkout
