@@ -1,0 +1,90 @@
+name: detect
+
+# Watches caddyserver/caddy for new stable releases. When one appears, this
+# workflow tags this repository and dispatches release.yml against that tag.
+#
+# Tags pushed with GITHUB_TOKEN do not trigger push events (GitHub recursion
+# protection), which is why release.yml is dispatched explicitly instead.
+
+on:
+  schedule:
+    # Every 6 hours, off the top of the hour.
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      caddy_version:
+        description: 'Caddy version to build (e.g. v2.11.4). Empty = latest stable upstream.'
+        required: false
+        type: string
+      suffix:
+        description: 'Packaging suffix for rebuilding an already-released Caddy version (e.g. plus.1).'
+        required: false
+        type: string
+
+permissions: {}
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create tags, check existing releases
+      actions: write  # dispatch release.yml
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+
+      # persist-credentials is required here so the tag push below can
+      # authenticate. This job never checks out or runs untrusted code,
+      # and no artifacts are uploaded from it.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 # zizmor: ignore[artipacked] credentials needed for the tag push; job uploads no artifacts
+
+      - name: Decide, tag and dispatch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.caddy_version }}
+          INPUT_SUFFIX: ${{ inputs.suffix }}
+        run: |
+          set -euo pipefail
+
+          version="${INPUT_VERSION}"
+          if [ -z "${version}" ]; then
+            version="$(gh api repos/caddyserver/caddy/releases/latest --jq .tag_name)"
+          fi
+          if ! [[ "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::unexpected caddy version format: ${version}"
+            exit 1
+          fi
+
+          if [ "${EVENT_NAME}" = "schedule" ] && [ -n "${INPUT_SUFFIX}" ]; then
+            echo "::error::suffix is only allowed on manual dispatch"
+            exit 1
+          fi
+
+          tag="${version}"
+          if [ -n "${INPUT_SUFFIX}" ]; then
+            if ! [[ "${INPUT_SUFFIX}" =~ ^[a-z0-9]+(\.[0-9]+)*$ ]]; then
+              echo "::error::invalid suffix: ${INPUT_SUFFIX}"
+              exit 1
+            fi
+            tag="${version}-${INPUT_SUFFIX}"
+          fi
+
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            echo "Release ${tag} already exists; nothing to do."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${tag}" -m "caddy-plus ${tag} (caddy ${version})"
+          git push origin "${tag}"
+
+          gh workflow run release.yml --ref "${tag}"
+          echo "Dispatched release.yml for ${tag} (caddy ${version})"

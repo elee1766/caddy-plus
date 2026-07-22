@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # Keeps SHA-pinned actions current (updates the pin and version comment).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    # Don't pick up fresh releases immediately; let supply-chain issues
+    # in brand-new action versions surface first.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns:
+          - '*'
+
+  # Keeps the pinned alpine base image in docker/Dockerfile current.
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    cooldown:
+      default-days: 7

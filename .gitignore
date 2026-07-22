@@ -1,0 +1,10 @@
+dist/
+out/
+release/
+ctx/
+*.tar.gz
+*.zip
+*.spdx.json
+*.sarif
+results.sarif
+notes.md

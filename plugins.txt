@@ -1,0 +1,20 @@
+# caddy-plus plugin manifest
+#
+# One plugin per line:  <go-module-path>@<version>
+#
+# Rules enforced by the pipeline:
+#   - every entry MUST be pinned to an exact version (vX.Y.Z or pseudo-version)
+#   - "@latest", branches and commit SHAs are rejected
+#   - blank lines and lines starting with # are ignored
+#
+# The build fails if any plugin listed here is not found inside the
+# resulting binary at the exact pinned version.
+#
+# Examples (uncomment and adjust as desired):
+#
+# github.com/caddy-dns/cloudflare@v0.2.2
+# github.com/caddyserver/cache-handler@v0.16.0
+# github.com/mholt/caddy-ratelimit@v0.1.1
+# github.com/greenpau/caddy-security@v1.1.31
+# github.com/corazawaf/coraza-caddy/v2@v2.0.2
+# github.com/caddyserver/replace-response@v0.0.0-20241211230946-8fbb904e1b24

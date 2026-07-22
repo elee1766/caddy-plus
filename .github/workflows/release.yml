@@ -1,0 +1,517 @@
+name: release
+
+# Builds Caddy with the pinned plugins from plugins.txt for a tag of the form
+# vX.Y.Z (mirroring the upstream Caddy version) or vX.Y.Z-<suffix> for
+# packaging rebuilds of the same upstream version.
+#
+# Triggered by:
+#   - push of a v* tag (manual tagging)
+#   - workflow_dispatch on a tag ref (used by detect.yml)
+#
+# Pipeline: build (matrix) -> finalize -> provenance (SLSA L3)
+#           -> sign-attest -> docker -> verify-publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: '1.26.0'
+  XCADDY_VERSION: 'v0.4.5'
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: freebsd
+            goarch: amd64
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            *.blob.core.windows.net:443
+            api.github.com:443
+            dl.google.com:443
+            go.dev:443
+            github.com:443
+            objects.githubusercontent.com:443
+            proxy.golang.org:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            storage.googleapis.com:443
+            sum.golang.org:443
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Install xcaddy (pinned)
+        env:
+          XCADDY_VERSION: ${{ env.XCADDY_VERSION }}
+        run: |
+          set -euo pipefail
+          go install "github.com/caddyserver/xcaddy/cmd/xcaddy@${XCADDY_VERSION}"
+          xcaddy version
+
+      - name: Build caddy with pinned plugins
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          # Tag may carry a packaging suffix (v2.11.4-plus.1); the Caddy
+          # version is everything before the first '-'.
+          caddy_version="${REF_NAME%%-*}"
+          echo "caddy_version=${caddy_version}" >> "$GITHUB_ENV"
+
+          with_args=()
+          while IFS= read -r raw; do
+            line="${raw%%#*}"
+            line="$(echo "${line}" | xargs || true)"
+            [ -z "${line}" ] && continue
+            if ! [[ "${line}" =~ ^[a-zA-Z0-9./_~-]+@v[0-9][a-zA-Z0-9.+-]*$ ]]; then
+              echo "::error::invalid or unpinned plugin entry in plugins.txt: ${line}"
+              exit 1
+            fi
+            with_args+=(--with "${line}")
+          done < plugins.txt
+          echo "Building caddy ${caddy_version} with ${#with_args[@]} plugin arg(s)"
+
+          out="out/${GOOS}-${GOARCH}"
+          mkdir -p "${out}"
+          XCADDY_GO_BUILD_FLAGS="-trimpath -buildvcs=false -ldflags=-s -w -buildid=" \
+            xcaddy build "${caddy_version}" --output "${out}/caddy" "${with_args[@]}"
+
+      - name: Smoke check binary and plugin versions
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: |
+          set -euo pipefail
+          bin="out/linux-amd64/caddy"
+          "${bin}" version
+          mods="$(go version -m "${bin}")"
+          printf '%s\n' "${mods}" | grep -P "^mod\tgithub.com/caddyserver/caddy/v2\t${caddy_version}\s" \
+            || { echo "::error::caddy core version mismatch (expected ${caddy_version})"; exit 1; }
+          while IFS= read -r raw; do
+            line="${raw%%#*}"
+            line="$(echo "${line}" | xargs || true)"
+            [ -z "${line}" ] && continue
+            mod="${line%@*}"
+            ver="${line#*@}"
+            printf '%s\n' "${mods}" | grep -P "^dep\t${mod}\t${ver}(\s|$)" >/dev/null \
+              || { echo "::error::plugin ${mod}@${ver} not found in binary"; exit 1; }
+            echo "verified plugin: ${mod}@${ver}"
+          done < plugins.txt
+
+      - name: Package archive
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          asset="caddy-plus_${tag}_${GOOS}_${GOARCH}.tar.gz"
+          mkdir -p release
+          tar -C "out/${GOOS}-${GOARCH}" -czf "release/${asset}" caddy
+          sha256sum "release/${asset}"
+
+      - name: Upload archive artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bin-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: release/*.tar.gz
+          if-no-files-found: error
+          retention-days: 5
+
+  finalize:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      hashes: ${{ steps.sums.outputs.hashes }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            *.blob.core.windows.net:443
+            api.github.com:443
+            github.com:443
+            objects.githubusercontent.com:443
+
+      - name: Download archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: bin-*
+          path: release
+          merge-multiple: true
+
+      - name: Generate checksums and SLSA subjects
+        id: sums
+        run: |
+          set -euo pipefail
+          cd release
+          ls -la
+          sha256sum *.tar.gz | tee checksums.txt
+          { sha256sum *.tar.gz; sha256sum checksums.txt; } > subjects.txt
+          echo "hashes=$(base64 -w0 subjects.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release assets artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets
+          path: |
+            release/*.tar.gz
+            release/checksums.txt
+          if-no-files-found: error
+          retention-days: 5
+
+  # SLSA L3 provenance in an isolated builder. Reusable workflows from
+  # slsa-github-generator must be referenced by tag (by design).
+  provenance:
+    needs: finalize
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0 # zizmor: ignore[unpinned-uses] SLSA reusable workflows must be referenced by tag (SLSA design)
+    with:
+      base64-subjects: ${{ needs.finalize.outputs.hashes }}
+      provenance-name: caddy-plus_${{ github.ref_name }}.intoto.jsonl
+      upload-assets: true
+      draft-release: true
+
+  sign-attest:
+    needs: [finalize, provenance]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # upload release assets
+      id-token: write      # cosign keyless + attestations
+      attestations: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            *.blob.core.windows.net:443
+            api.github.com:443
+            fulcio.sigstore.dev:443
+            github.com:443
+            objects.githubusercontent.com:443
+            rekor.sigstore.dev:443
+            tuf-repo-cdn.sigstore.dev:443
+            uploads.github.com:443
+
+      - name: Download release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: release
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign blobs (keyless)
+        run: |
+          set -euo pipefail
+          cd release
+          for f in *.tar.gz checksums.txt; do
+            cosign sign-blob --yes --bundle "${f}.bundle" "${f}"
+          done
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: release/
+
+      - name: Generate SBOM for linux/amd64 archive
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: release/caddy-plus_${{ github.ref_name }}_linux_amd64.tar.gz
+          format: spdx-json
+          output-file: sbom_linux_amd64.spdx.json
+          upload-artifact: false
+
+      - name: Attest SBOM
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: release/caddy-plus_${{ github.ref_name }}_linux_amd64.tar.gz
+          sbom-path: sbom_linux_amd64.spdx.json
+
+      - name: Upload assets to draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${GITHUB_REF_NAME}" \
+            release/* sbom_linux_amd64.spdx.json --clobber
+
+  docker:
+    needs: finalize
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write      # push to ghcr.io
+      id-token: write      # cosign keyless + attestations
+      attestations: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            *.blob.core.windows.net:443
+            api.github.com:443
+            auth.docker.io:443
+            fulcio.sigstore.dev:443
+            ghcr.io:443
+            github.com:443
+            objects.githubusercontent.com:443
+            pkg-containers.githubusercontent.com:443
+            production.cloudflare.docker.com:443
+            registry-1.docker.io:443
+            rekor.sigstore.dev:443
+            tuf-repo-cdn.sigstore.dev:443
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Stage linux binaries into build context
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: bin-linux-*
+          path: stage
+
+      - name: Extract binaries
+        run: |
+          set -euo pipefail
+          for d in stage/bin-linux-*; do
+            arch="${d##*-}"
+            mkdir -p "dist/linux-${arch}"
+            tar -C "dist/linux-${arch}" -xzf "${d}"/*.tar.gz
+          done
+          find dist -type f
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+            ${{ env.IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.description=Caddy web server with pinned plugins (caddy-plus)
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign image (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE_NAME}@${DIGEST}"
+
+      - name: Attest image build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate image SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom_image.spdx.json
+          upload-artifact: false
+
+      - name: Attest image SBOM
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: sbom_image.spdx.json
+          push-to-registry: true
+
+  verify-publish:
+    needs: [sign-attest, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # publish release
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            fulcio.sigstore.dev:443
+            github.com:443
+            objects.githubusercontent.com:443
+            rekor.sigstore.dev:443
+            tuf-repo-cdn.sigstore.dev:443
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install slsa-verifier
+        uses: slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6 # v2.7.1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Download published assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p verify
+          gh release download "${GITHUB_REF_NAME}" --dir verify --clobber
+          ls -la verify
+
+      - name: Verify SLSA provenance
+        run: |
+          set -euo pipefail
+          for f in verify/*.tar.gz verify/checksums.txt; do
+            slsa-verifier verify-artifact \
+              --provenance-path "verify/caddy-plus_${GITHUB_REF_NAME}.intoto.jsonl" \
+              --source-uri "github.com/${GITHUB_REPOSITORY}" \
+              --source-tag "${GITHUB_REF_NAME}" \
+              "${f}"
+          done
+
+      - name: Verify cosign blob signatures
+        run: |
+          set -euo pipefail
+          identity="^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@refs/tags/"
+          for f in verify/*.tar.gz verify/checksums.txt; do
+            cosign verify-blob \
+              --bundle "${f}.bundle" \
+              --certificate-identity-regexp "${identity}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "${f}"
+          done
+
+      - name: Render release notes
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          caddy_version="${tag%%-*}"
+          {
+            echo "## caddy-plus ${tag}"
+            echo
+            echo "Caddy [${caddy_version}](https://github.com/caddyserver/caddy/releases/tag/${caddy_version}) built from source with pinned plugins."
+            echo
+            echo "### Plugins"
+            echo
+            echo "| Plugin | Version |"
+            echo "|---|---|"
+            count=0
+            while IFS= read -r raw; do
+              line="${raw%%#*}"
+              line="$(echo "${line}" | xargs || true)"
+              [ -z "${line}" ] && continue
+              mod="${line%@*}"
+              ver="${line#*@}"
+              echo "| [\`${mod}\`](https://${mod}) | \`${ver}\` |"
+              count=$((count + 1))
+            done < plugins.txt
+            [ "${count}" -eq 0 ] && echo "| _(none — stock caddy)_ | |"
+            echo
+            echo "### Container image"
+            echo
+            echo "\`\`\`"
+            echo "docker pull ghcr.io/${GITHUB_REPOSITORY}:${tag}"
+            echo "\`\`\`"
+            echo
+            echo "### Verify this release"
+            echo
+            echo "\`\`\`sh"
+            echo "# GitHub artifact attestation"
+            echo "gh attestation verify caddy-plus_${tag}_linux_amd64.tar.gz -R ${GITHUB_REPOSITORY}"
+            echo
+            echo "# SLSA provenance"
+            echo "slsa-verifier verify-artifact \\"
+            echo "  --provenance-path caddy-plus_${tag}.intoto.jsonl \\"
+            echo "  --source-uri github.com/${GITHUB_REPOSITORY} \\"
+            echo "  --source-tag ${tag} \\"
+            echo "  caddy-plus_${tag}_linux_amd64.tar.gz"
+            echo
+            echo "# cosign signature"
+            echo "cosign verify-blob \\"
+            echo "  --bundle caddy-plus_${tag}_linux_amd64.tar.gz.bundle \\"
+            echo "  --certificate-identity-regexp '^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@refs/tags/' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
+            echo "  caddy-plus_${tag}_linux_amd64.tar.gz"
+            echo
+            echo "# container image"
+            echo "cosign verify ghcr.io/${GITHUB_REPOSITORY}:${tag} \\"
+            echo "  --certificate-identity-regexp '^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@refs/tags/' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo "\`\`\`"
+            echo
+            echo '```'
+            cat verify/checksums.txt
+            echo '```'
+          } > notes.md
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --notes-file notes.md
