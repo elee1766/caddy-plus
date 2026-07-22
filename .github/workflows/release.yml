@@ -233,6 +233,7 @@ jobs:
             github.com:443
             objects.githubusercontent.com:443
             rekor.sigstore.dev:443
+            timestamp.sigstore.dev:443
             release-assets.githubusercontent.com:443
             tuf-repo-cdn.sigstore.dev:443
             uploads.github.com:443
@@ -309,6 +310,7 @@ jobs:
             production.cloudfront.docker.com:443
             registry-1.docker.io:443
             rekor.sigstore.dev:443
+            timestamp.sigstore.dev:443
             release-assets.githubusercontent.com:443
             tuf-repo-cdn.sigstore.dev:443
 
@@ -411,6 +413,7 @@ jobs:
             github.com:443
             objects.githubusercontent.com:443
             rekor.sigstore.dev:443
+            timestamp.sigstore.dev:443
             release-assets.githubusercontent.com:443
             tuf-repo-cdn.sigstore.dev:443
 
