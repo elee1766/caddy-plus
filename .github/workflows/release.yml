@@ -515,3 +515,5 @@ jobs:
         run: |
           set -euo pipefail
           gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --notes-file notes.md
+
+# (index probe)
