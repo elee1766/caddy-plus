@@ -123,7 +123,8 @@ jobs:
           mods="$(go version -m "${bin}")"
           # xcaddy builds caddy core as a dependency of a synthetic main module,
           # so it appears as 'dep' (not 'mod') in go version -m output.
-          printf '%s\n' "${mods}" | grep -P "^(mod|dep)\tgithub\.com/caddyserver/caddy/v2\t${caddy_version}(\s|$)" \
+          # Note: go version -m indents lines with a leading tab.
+          printf '%s\n' "${mods}" | grep -P "^\s*(mod|dep)\tgithub\.com/caddyserver/caddy/v2\t${caddy_version}(\s|$)" \
             || { echo "::error::caddy core version mismatch (expected ${caddy_version})"; exit 1; }
           while IFS= read -r raw; do
             line="${raw%%#*}"
@@ -131,7 +132,7 @@ jobs:
             [ -z "${line}" ] && continue
             mod="${line%@*}"
             ver="${line#*@}"
-            printf '%s\n' "${mods}" | grep -P "^dep\t${mod}\t${ver}(\s|$)" >/dev/null \
+            printf '%s\n' "${mods}" | grep -P "^\s*dep\t${mod}\t${ver}(\s|$)" >/dev/null \
               || { echo "::error::plugin ${mod}@${ver} not found in binary"; exit 1; }
             echo "verified plugin: ${mod}@${ver}"
           done < plugins.txt
