@@ -88,3 +88,5 @@ jobs:
 
           gh workflow run release.yml --ref "${tag}"
           echo "Dispatched release.yml for ${tag} (caddy ${version})"
+
+# (index probe)
