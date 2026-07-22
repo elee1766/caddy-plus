@@ -185,8 +185,8 @@ jobs:
           set -euo pipefail
           cd release
           ls -la
-          sha256sum *.tar.gz | tee checksums.txt
-          { sha256sum *.tar.gz; sha256sum checksums.txt; } > subjects.txt
+          sha256sum -- *.tar.gz | tee checksums.txt
+          { sha256sum -- *.tar.gz; sha256sum checksums.txt; } > subjects.txt
           echo "hashes=$(base64 -w0 subjects.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Upload release assets artifact
