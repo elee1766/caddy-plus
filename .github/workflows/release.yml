@@ -264,7 +264,7 @@ jobs:
       - name: Generate SBOM for linux/amd64 archive
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          path: release/caddy-plus_${{ github.ref_name }}_linux_amd64.tar.gz
+          file: release/caddy-plus_${{ github.ref_name }}_linux_amd64.tar.gz
           format: spdx-json
           output-file: sbom_linux_amd64.spdx.json
           upload-artifact: false
