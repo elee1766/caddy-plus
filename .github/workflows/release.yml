@@ -80,7 +80,9 @@ jobs:
           XCADDY_VERSION: ${{ env.XCADDY_VERSION }}
         run: |
           set -euo pipefail
-          go install "github.com/caddyserver/xcaddy/cmd/xcaddy@${XCADDY_VERSION}"
+          # GOOS/GOARCH are set for the cross-compile matrix; unset them so
+          # xcaddy itself is built for the host and lands in $GOPATH/bin.
+          env -u GOOS -u GOARCH go install "github.com/caddyserver/xcaddy/cmd/xcaddy@${XCADDY_VERSION}"
           xcaddy version
 
       - name: Build caddy with pinned plugins
@@ -109,7 +111,7 @@ jobs:
 
           out="out/${GOOS}-${GOARCH}"
           mkdir -p "${out}"
-          XCADDY_GO_BUILD_FLAGS="-trimpath -buildvcs=false -ldflags=-s -w -buildid=" \
+          XCADDY_GO_BUILD_FLAGS="-trimpath -buildvcs=false -ldflags '-s -w -buildid='" \
             xcaddy build "${caddy_version}" --output "${out}/caddy" "${with_args[@]}"
 
       - name: Smoke check binary and plugin versions
@@ -515,5 +517,3 @@ jobs:
         run: |
           set -euo pipefail
           gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --notes-file notes.md
-
-# (index probe)
