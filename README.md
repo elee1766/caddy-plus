@@ -20,9 +20,12 @@ binaries and a container image.
 
 ## Plugins
 
-The build contents are defined by [`plugins.txt`](plugins.txt) — one
-`module@version` per line, always pinned. The pipeline verifies at build time
-that every plugin is present in the binary at the exact pinned version.
+The build contents are defined by [`main.go`](main.go) (blank plugin imports)
+and pinned in [`go.mod`](go.mod) / [`go.sum`](go.sum) — every dependency,
+transitive ones included, is hash-pinned and changes are reviewable diffs.
+Dependabot proposes plugin and Caddy bumps as PRs. The pipeline verifies at
+build time that every direct dependency is present in the binary at the exact
+pinned version.
 
 ## Versioning
 
@@ -83,10 +86,12 @@ runs as the unprivileged `nobody` user.
 ## How it works
 
 - [`detect.yml`](.github/workflows/detect.yml) polls upstream releases every
-  6 h, tags this repo, and dispatches the release pipeline.
-- [`release.yml`](.github/workflows/release.yml) builds with
-  [`xcaddy`](https://github.com/caddyserver/xcaddy) (pinned), smoke-checks the
-  binary, and produces all signatures/attestations before publishing.
+  6 h, bumps `go.mod` to the new Caddy version, commits, tags this repo, and
+  dispatches the release pipeline — so every tag captures the exact
+  `go.mod`/`go.sum` that produced it.
+- [`release.yml`](.github/workflows/release.yml) builds with plain `go build`
+  from the committed module, smoke-checks the binary, and produces all
+  signatures/attestations before publishing.
 - All actions are pinned to full-length commit SHAs, every network-touching
   job runs behind [step-security/harden-runner](https://github.com/step-security/harden-runner)
   egress blocking, and there are no long-lived signing keys anywhere (cosign
@@ -97,4 +102,4 @@ See [SECURITY.md](SECURITY.md) for the full hardening model.
 ## License
 
 Apache-2.0 (same as Caddy). Built binaries contain Caddy and the plugins
-listed in `plugins.txt`, which carry their own licenses.
+listed in `go.mod`, which carry their own licenses.

@@ -1,7 +1,8 @@
 name: detect
 
 # Watches caddyserver/caddy for new stable releases. When one appears, this
-# workflow tags this repository and dispatches release.yml against that tag.
+# workflow bumps caddy in go.mod, commits, tags this repository, and
+# dispatches release.yml against that tag.
 #
 # Tags pushed with GITHUB_TOKEN do not trigger push events (GitHub recursion
 # protection), which is why release.yml is dispatched explicitly instead.
@@ -27,7 +28,7 @@ jobs:
   detect:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # create tags, check existing releases
+      contents: write # bump go.mod, create tags, check existing releases
       actions: write  # dispatch release.yml
     steps:
       - name: Harden runner
@@ -36,15 +37,28 @@ jobs:
           egress-policy: block
           allowed-endpoints: >
             api.github.com:443
+            dl.google.com:443
             github.com:443
+            go.dev:443
+            proxy.golang.org:443
+            raw.githubusercontent.com:443
+            storage.googleapis.com:443
+            sum.golang.org:443
 
-      # persist-credentials is required here so the tag push below can
-      # authenticate. This job never checks out or runs untrusted code,
+      # persist-credentials is required here so the go.mod bump and the tag
+      # can be pushed. This job never checks out or runs untrusted code,
       # and no artifacts are uploaded from it.
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 # zizmor: ignore[artipacked] credentials needed for the tag push; job uploads no artifacts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 # zizmor: ignore[artipacked] credentials needed to push the bump commit and tag; job uploads no artifacts
 
-      - name: Decide, tag and dispatch
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.0'
+          cache: false
+
+      - name: Decide version and tag
+        id: decide
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
@@ -78,13 +92,49 @@ jobs:
 
           if gh release view "${tag}" >/dev/null 2>&1; then
             echo "Release ${tag} already exists; nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Bump caddy in go.mod
+        if: steps.decide.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.decide.outputs.version }}
+        run: |
+          set -euo pipefail
+          go get "github.com/caddyserver/caddy/v2@${VERSION}"
+          go mod tidy
+          if ! git diff --quiet -- go.mod go.sum; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add go.mod go.sum
+            git commit -m "caddy ${VERSION}"
+            git push
+          else
+            echo "go.mod already at caddy ${VERSION}"
+          fi
+          # The tag must capture the exact go.mod/go.sum being released.
+          mod_version="$(go list -mod=readonly -m -f '{{.Version}}' github.com/caddyserver/caddy/v2)"
+          if [ "${mod_version}" != "${VERSION}" ]; then
+            echo "::error::go.mod pins caddy ${mod_version} after bump, expected ${VERSION}"
+            exit 1
+          fi
+
+      - name: Tag and dispatch
+        if: steps.decide.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.decide.outputs.tag }}
+          VERSION: ${{ steps.decide.outputs.version }}
+        run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${tag}" -m "caddy-plus ${tag} (caddy ${version})"
-          git push origin "${tag}"
-
-          gh workflow run release.yml --ref "${tag}"
-          echo "Dispatched release.yml for ${tag} (caddy ${version})"
+          git tag -a "${TAG}" -m "caddy-plus ${TAG} (caddy ${VERSION})"
+          git push origin "${TAG}"
+          gh workflow run release.yml --ref "${TAG}"
+          echo "Dispatched release.yml for ${TAG} (caddy ${VERSION})"

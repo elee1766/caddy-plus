@@ -1,6 +1,6 @@
 name: release
 
-# Builds Caddy with the pinned plugins from plugins.txt for a tag of the form
+# Builds Caddy with the pinned plugins from go.mod/main.go for a tag of the form
 # vX.Y.Z (mirroring the upstream Caddy version) or vX.Y.Z-<suffix> for
 # packaging rebuilds of the same upstream version.
 #
@@ -25,7 +25,6 @@ concurrency:
 
 env:
   GO_VERSION: '1.26.0'
-  XCADDY_VERSION: 'v0.4.5'
   IMAGE_NAME: ghcr.io/${{ github.repository }}
 
 jobs:
@@ -75,44 +74,33 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
-      - name: Install xcaddy (pinned)
-        env:
-          XCADDY_VERSION: ${{ env.XCADDY_VERSION }}
-        run: |
-          set -euo pipefail
-          # GOOS/GOARCH are set for the cross-compile matrix; unset them so
-          # xcaddy itself is built for the host and lands in $GOPATH/bin.
-          env -u GOOS -u GOARCH go install "github.com/caddyserver/xcaddy/cmd/xcaddy@${XCADDY_VERSION}"
-          xcaddy version
-
-      - name: Build caddy with pinned plugins
+      - name: Verify go.mod matches tag
         env:
           REF_NAME: ${{ github.ref_name }}
-          CGO_ENABLED: '0'
         run: |
           set -euo pipefail
           # Tag may carry a packaging suffix (v2.11.4-plus.1); the Caddy
           # version is everything before the first '-'.
           caddy_version="${REF_NAME%%-*}"
           echo "caddy_version=${caddy_version}" >> "$GITHUB_ENV"
+          mod_version="$(go list -mod=readonly -m -f '{{.Version}}' github.com/caddyserver/caddy/v2)"
+          echo "go.mod pins caddy ${mod_version}"
+          if [ "${mod_version}" != "${caddy_version}" ]; then
+            echo "::error::go.mod pins caddy ${mod_version} but tag implies ${caddy_version}"
+            exit 1
+          fi
 
-          with_args=()
-          while IFS= read -r raw; do
-            line="${raw%%#*}"
-            line="$(echo "${line}" | xargs || true)"
-            [ -z "${line}" ] && continue
-            if ! [[ "${line}" =~ ^[a-zA-Z0-9./_~-]+@v[0-9][a-zA-Z0-9.+-]*$ ]]; then
-              echo "::error::invalid or unpinned plugin entry in plugins.txt: ${line}"
-              exit 1
-            fi
-            with_args+=(--with "${line}")
-          done < plugins.txt
-          echo "Building caddy ${caddy_version} with ${#with_args[@]} plugin arg(s)"
-
+      - name: Build caddy
+        env:
+          CGO_ENABLED: '0'
+          GOFLAGS: -mod=readonly
+        run: |
+          set -euo pipefail
           out="out/${GOOS}-${GOARCH}"
           mkdir -p "${out}"
-          XCADDY_GO_BUILD_FLAGS="-trimpath -buildvcs=false -ldflags '-s -w -buildid='" \
-            xcaddy build "${caddy_version}" --output "${out}/caddy" "${with_args[@]}"
+          go build -trimpath -buildvcs=false \
+            -ldflags "-s -w -buildid=" \
+            -o "${out}/caddy" .
 
       - name: Smoke check binary and plugin versions
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
@@ -126,16 +114,12 @@ jobs:
           # Note: go version -m indents lines with a leading tab.
           printf '%s\n' "${mods}" | grep -P "^\s*(mod|dep)\tgithub\.com/caddyserver/caddy/v2\t${caddy_version}(\s|$)" \
             || { echo "::error::caddy core version mismatch (expected ${caddy_version})"; exit 1; }
-          while IFS= read -r raw; do
-            line="${raw%%#*}"
-            line="$(echo "${line}" | xargs || true)"
-            [ -z "${line}" ] && continue
-            mod="${line%@*}"
-            ver="${line#*@}"
+          while IFS=$'\t' read -r mod ver; do
+            [ "${mod}" = "github.com/caddyserver/caddy/v2" ] && continue
             printf '%s\n' "${mods}" | grep -P "^\s*dep\t${mod}\t${ver}(\s|$)" >/dev/null \
               || { echo "::error::plugin ${mod}@${ver} not found in binary"; exit 1; }
             echo "verified plugin: ${mod}@${ver}"
-          done < plugins.txt
+          done < <(go mod edit -json | jq -r '.Require[] | select(.Indirect|not) | .Path + "\t" + .Version')
 
       - name: Package archive
         run: |
@@ -412,18 +396,28 @@ jobs:
           egress-policy: block
           allowed-endpoints: >
             api.github.com:443
+            dl.google.com:443
             fulcio.sigstore.dev:443
             github.com:443
+            go.dev:443
             objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
             rekor.sigstore.dev:443
             timestamp.sigstore.dev:443
             release-assets.githubusercontent.com:443
+            storage.googleapis.com:443
             tuf-repo-cdn.sigstore.dev:443
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
 
       - name: Install slsa-verifier
         uses: slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6 # v2.7.1
@@ -478,15 +472,11 @@ jobs:
             echo "| Plugin | Version |"
             echo "|---|---|"
             count=0
-            while IFS= read -r raw; do
-              line="${raw%%#*}"
-              line="$(echo "${line}" | xargs || true)"
-              [ -z "${line}" ] && continue
-              mod="${line%@*}"
-              ver="${line#*@}"
+            while IFS=$'\t' read -r mod ver; do
+              [ "${mod}" = "github.com/caddyserver/caddy/v2" ] && continue
               echo "| [\`${mod}\`](https://${mod}) | \`${ver}\` |"
               count=$((count + 1))
-            done < plugins.txt
+            done < <(go mod edit -json | jq -r '.Require[] | select(.Indirect|not) | .Path + "\t" + .Version')
             [ "${count}" -eq 0 ] && echo "| _(none — stock caddy)_ | |"
             echo
             echo "### Container image"

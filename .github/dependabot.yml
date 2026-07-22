@@ -25,3 +25,17 @@ updates:
       time: '06:00'
     cooldown:
       default-days: 7
+
+  # Keeps caddy and plugin versions in go.mod current via PRs.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    cooldown:
+      default-days: 7
+    groups:
+      gomod:
+        patterns:
+          - '*'
