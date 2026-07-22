@@ -308,6 +308,7 @@ jobs:
             pkg-containers.githubusercontent.com:443
             production.cloudflare.docker.com:443
             production.cloudfront.docker.com:443
+            raw.githubusercontent.com:443
             registry-1.docker.io:443
             rekor.sigstore.dev:443
             timestamp.sigstore.dev:443
