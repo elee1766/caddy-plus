@@ -281,7 +281,8 @@ jobs:
         run: |
           set -euo pipefail
           gh release upload "${GITHUB_REF_NAME}" \
-            release/* sbom_linux_amd64.spdx.json --clobber
+            release/* sbom_linux_amd64.spdx.json --clobber \
+            --repo "${GITHUB_REPOSITORY}"
 
   docker:
     needs: finalize
