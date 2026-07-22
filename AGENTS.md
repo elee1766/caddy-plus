@@ -18,7 +18,9 @@ this repo — it is a build/packaging pipeline:
 
 1. **Every action MUST be pinned to a full-length commit SHA** with a
    `# vX.Y.Z` version comment. Exception: `slsa-github-generator` reusable
-   workflows, which must be referenced by tag (SLSA design).
+   workflows, which must be referenced by tag (SLSA design). This is why
+   GitHub's repo-level `sha_pinning_required` policy stays OFF — zizmor
+   enforces pinning instead; do not re-enable the repo policy.
 2. Never introduce `@latest` or unpinned versions anywhere — plugins.txt
    entries must match `^module@v\d…` (enforced by the pipeline).
 3. Every job needs `step-security/harden-runner` with `egress-policy: block`

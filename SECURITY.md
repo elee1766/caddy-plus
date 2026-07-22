@@ -18,7 +18,7 @@ produces a malicious artifact:
 
 | Layer | Control |
 |---|---|
-| Action integrity | Every action pinned to a full-length commit SHA with a version comment; repo policy requires SHA pinning; Dependabot proposes bumps |
+| Action integrity | Every action pinned to a full-length commit SHA with a version comment, enforced by zizmor/actionlint CI on every workflow change; Dependabot proposes bumps with a 7-day cooldown. (GitHub's repo-level SHA-pinning enforcement is intentionally off: it is incompatible with the SLSA generator, which must be referenced by tag.) |
 | Runtime network | `step-security/harden-runner` in block mode with per-job egress allowlists on every job |
 | Credentials | No long-lived secrets. `GITHUB_TOKEN` only, with `permissions: {}` at workflow level and least-privilege per-job grants. Signing is cosign **keyless** via OIDC — there is no signing key to steal |
 | Dependencies | Caddy version, xcaddy version, Go toolchain, and every plugin in `plugins.txt` are pinned; all Go modules are verified against the Go checksum database (`sum.golang.org`) |
