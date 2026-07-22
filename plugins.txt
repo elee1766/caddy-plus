@@ -9,12 +9,11 @@
 #
 # The build fails if any plugin listed here is not found inside the
 # resulting binary at the exact pinned version.
-#
-# Examples (uncomment and adjust as desired):
-#
-# github.com/caddy-dns/cloudflare@v0.2.2
-# github.com/caddyserver/cache-handler@v0.16.0
-# github.com/mholt/caddy-ratelimit@v0.1.1
-# github.com/greenpau/caddy-security@v1.1.31
-# github.com/corazawaf/coraza-caddy/v2@v2.0.2
-# github.com/caddyserver/replace-response@v0.0.0-20241211230946-8fbb904e1b24
+
+github.com/aksdb/caddy-cgi/v2@v2.2.7
+github.com/caddy-dns/cloudflare@v0.2.4
+github.com/greenpau/caddy-security@v1.1.62
+github.com/greenpau/caddy-trace@v1.1.13
+github.com/hslatman/caddy-crowdsec-bouncer@v0.12.1
+github.com/mholt/caddy-dynamicdns@v0.0.0-20251231002810-1af4f8876598
+github.com/mholt/caddy-l4@v0.1.0

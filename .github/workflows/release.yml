@@ -121,7 +121,9 @@ jobs:
           bin="out/linux-amd64/caddy"
           "${bin}" version
           mods="$(go version -m "${bin}")"
-          printf '%s\n' "${mods}" | grep -P "^mod\tgithub.com/caddyserver/caddy/v2\t${caddy_version}\s" \
+          # xcaddy builds caddy core as a dependency of a synthetic main module,
+          # so it appears as 'dep' (not 'mod') in go version -m output.
+          printf '%s\n' "${mods}" | grep -P "^(mod|dep)\tgithub\.com/caddyserver/caddy/v2\t${caddy_version}(\s|$)" \
             || { echo "::error::caddy core version mismatch (expected ${caddy_version})"; exit 1; }
           while IFS= read -r raw; do
             line="${raw%%#*}"
