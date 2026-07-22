@@ -232,6 +232,7 @@ jobs:
             fulcio.sigstore.dev:443
             github.com:443
             objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
             rekor.sigstore.dev:443
             timestamp.sigstore.dev:443
             release-assets.githubusercontent.com:443
