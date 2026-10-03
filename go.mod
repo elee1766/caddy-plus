@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/aksdb/caddy-cgi/v2 v2.2.7
 	github.com/caddy-dns/cloudflare v0.2.4
-	github.com/caddyserver/caddy/v2 v2.11.6
+	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/greenpau/caddy-security v1.1.62
 	github.com/greenpau/caddy-trace v1.1.13
 	github.com/hslatman/caddy-crowdsec-bouncer v0.12.1
@@ -57,6 +57,7 @@ require (
 	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da // indirect
 	github.com/dlclark/regexp2/v2 v2.8.0 // indirect
 	github.com/dunglas/go-urlpattern v1.0.0 // indirect
+	github.com/dunglas/httpsfv v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 // indirect
 	github.com/emersion/go-smtp v0.24.0 // indirect
